@@ -7,6 +7,10 @@ typedef struct {
     unsigned       len:3;
 } ngx_http_time_item_t;
 
+typedef struct {
+    ngx_int_t  hour_period;
+} ngx_http_time_var_conf_t;
+
 static ngx_int_t ngx_http_time_string_variable(
     ngx_http_request_t *r,
     ngx_http_variable_value_t *v,
@@ -24,9 +28,28 @@ static ngx_int_t ngx_http_time_tosec_variable(
     ngx_http_variable_value_t *v,
     uintptr_t data);
 
+static ngx_int_t ngx_http_time_to_hour_period_variable(
+    ngx_http_request_t *r,
+    ngx_http_variable_value_t *v,
+    uintptr_t data);
+
+static void *ngx_http_time_var_create_loc_conf(ngx_conf_t *cf);
+static char *ngx_http_time_var_merge_loc_conf(ngx_conf_t *cf, void *parent,
+        void *child);
+
+
 static ngx_int_t ngx_http_time_add_vars(ngx_conf_t *cf);
 
-static ngx_command_t ngx_http_time_var_commands[] = { ngx_null_command, };
+static ngx_command_t ngx_http_time_var_commands[] = { 
+    { ngx_string("time_var_hour_period"),
+        NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_num_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_time_var_conf_t, hour_period),
+        NULL},
+
+    ngx_null_command
+};
 
 static ngx_http_module_t  ngx_http_time_var_module_ctx = {
     ngx_http_time_add_vars,        /* preconfiguration */
@@ -35,8 +58,8 @@ static ngx_http_module_t  ngx_http_time_var_module_ctx = {
     NULL,                          /* init main configuration */
     NULL,                          /* create server configuration */
     NULL,                          /* merge server configuration */
-    NULL,                          /* create location configuration */
-    NULL,                          /* merge location configuration */
+    ngx_http_time_var_create_loc_conf,/* create location configuration */
+    ngx_http_time_var_merge_loc_conf/* merge location configuration */
 };
 
 ngx_module_t  ngx_http_time_var_module = {
@@ -123,6 +146,9 @@ static ngx_http_variable_t  ngx_http_time_vars[] = {
       ngx_http_time_tomsec_variable, 0,
       NGX_HTTP_VAR_NOCACHEABLE, 0 },
 
+    { ngx_string("tm_hour_period"), NULL,
+      ngx_http_time_to_hour_period_variable, 0,
+      NGX_HTTP_VAR_NOCACHEABLE, 0 },
 
     { ngx_null_string, NULL, NULL, 0, 0, 0 }
 };
@@ -214,4 +240,59 @@ ngx_http_time_tosec_variable(ngx_http_request_t *r,
     v->not_found = 0;
     v->data = p;
     return NGX_OK;
+}
+
+static ngx_int_t ngx_http_time_to_hour_period_variable(
+    ngx_http_request_t *r,
+    ngx_http_variable_value_t *v,
+    uintptr_t data) 
+{
+    ngx_int_t     hour, period;
+    ngx_time_t    *tp;
+    u_char        *p;
+
+    ngx_http_time_var_conf_t * conf;
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_time_var_module);
+    period = (conf->hour_period == 2 || conf->hour_period == 3 || conf->hour_period == 4
+        || conf->hour_period == 6 || conf->hour_period == 8 || conf->hour_period == 12) ? conf->hour_period : 1;
+
+    tp = ngx_timeofday();
+
+    p = ngx_pnalloc(r->pool, 3);
+    if (p == NULL) {
+        return NGX_ERROR;
+    }
+
+    hour = ((int)(tp->sec / 3600) + 8) % 24;
+    hour = hour - (hour % period);
+
+    v->len = ngx_sprintf(p, "%02d", hour) - p;
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    v->data = p;
+    return NGX_OK;
+}
+
+static void *ngx_http_time_var_create_loc_conf(ngx_conf_t *cf) {
+    ngx_http_time_var_conf_t  *conf;
+
+    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_time_var_conf_t));
+    if (conf == NULL) {
+        return NULL;
+    }
+
+    conf->hour_period = NGX_CONF_UNSET_UINT;
+    return conf;
+}
+static char *ngx_http_time_var_merge_loc_conf(ngx_conf_t *cf, void *parent,
+        void *child) {
+
+    ngx_http_time_var_conf_t *prev = parent;
+    ngx_http_time_var_conf_t *conf = child;
+
+    ngx_conf_merge_value(conf->hour_period, prev->hour_period, 1); 
+
+    return NGX_CONF_OK;
 }
